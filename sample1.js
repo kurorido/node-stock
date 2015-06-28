@@ -1,54 +1,77 @@
 var needle = require('needle');
 var cheerio = require("cheerio");
 var fs = require("fs");
-
+var mongoose = require('mongoose');
+var moment = require('moment');
 var jsonArray = []; // object result array
 
 var apiURL = "https://www.google.com/finance/historical";
 
-var time = 0;
+var Schema = mongoose.Schema;
+
+var stockSchema = new Schema({
+  open:  Number,
+  high: Number,
+  low:  Number,
+  close: Number,
+  volume: Number,
+  date: { type: Date }
+});
 
 function trimLast(str) {
 	return str.substring(0, str.length-1);
 }
 
+mongoose.connect('mongodb://localhost/stock');
+mongoose.connection.on('error', console.log);
+
+var collection = "TPE:2387";
+var Stock = mongoose.model("TPE2387", stockSchema);
+
 function pullToJson(param, done) {
 
-	needle.request('get', apiURL, param, function(error, response) {
+	var url = apiURL + "?q=" + param.q + "&startdate=" + param.startdate + "&enddate=" + param.enddate + "&num=" + param.num + "&start=" + param.start;
+	url = encodeURI(url);
 
-		param.start = param.start + param.num;
+	needle.get(url, function(error, response) {
 
-	    var html = response.body;
-	    $ = cheerio.load(html);
-	    var rows = $(".gf-table tr");
-	    for(var i = 0, rowsLen = rows.length; i < rowsLen; i = i + 1) {
-	    	var row = $(rows[i]);
+		if(!error) {
+		    var html = response.body;
+		    $ = cheerio.load(html);
+		    var rows = $(".gf-table tr");
+		    console.log(rows.length)
+		    for(var i = 0, rowsLen = rows.length; i < rowsLen; i = i + 1) {
+		    	var row = $(rows[i]);
 
-	    	// skip header
-	    	if(row.hasClass("bb")) continue;
+		    	// skip header
+		    	if(row.hasClass("bb")) {
+		    		console.log("header skip"); 
+		    		continue;
+		    	}
 
-	    	var cols = row.find("td");
-	    	var jsonObject = {};
-	    	jsonObject.date = trimLast($(cols[0]).html());
-	    	jsonObject.open = trimLast($(cols[1]).html());
-	    	jsonObject.high = trimLast($(cols[2]).html());
-	    	jsonObject.low = trimLast($(cols[3]).html());
-	    	jsonObject.close = trimLast($(cols[4]).html());
-	    	jsonObject.volume = trimLast($(cols[5]).html());
-	    	jsonArray.push(jsonObject);
-	    }
-
-	}).on('end', function() {
-	    time = time + 1;
-		if(time == 2) {
-			done();
+		    	var cols = row.find("td");
+		    	var stock = new Stock();
+		    	stock.date = moment(trimLast($(cols[0]).html())).toDate();
+		    	stock.open = trimLast($(cols[1]).html()).replace(/,/g, '');
+		    	stock.high = trimLast($(cols[2]).html()).replace(/,/g, '');
+		    	stock.low = trimLast($(cols[3]).html()).replace(/,/g, '');
+		    	stock.close = trimLast($(cols[4]).html()).replace(/,/g, '');
+		    	stock.volume = trimLast($(cols[5]).html()).replace(/,/g, '');
+		    	stock.save(function(err) {
+		    		if(err) console.log(err);
+		    	});
+		    }
+		} else {
+			console.log(error);
 		}
+
+
 	});
 }
 
 for(var i = 0; i < 2; i++) {
 	var param = {};
-	param.cid = "674482";
+	param.q = collection;
 	param.startdate = "Apr 13, 2014";
 	param.enddate = "Apr 12, 2015";
 	param.num = 200;
@@ -56,6 +79,6 @@ for(var i = 0; i < 2; i++) {
 
 	pullToJson(param, function() {
 		console.log("done");
-		fs.writeFileSync("result.json", JSON.stringify(jsonArray));
+		fs.writeFileSync("result.json", JSON.stringify(jsonArray, null, '\t'));
 	});
 }
